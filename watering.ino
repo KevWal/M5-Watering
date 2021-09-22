@@ -6,31 +6,41 @@
 // M5 Stick C LCD is 80 x 160
 
 int rawADC; // Value read from ADC
-RTC_DATA_ATTR int waterADC = 2000; // ADC Level at which we turn on watering
+RTC_DATA_ATTR int waterADC = 1900; // ADC Level at which we turn on watering, save in RTC memory to keep across a deep sleep
 
-// Run every time after a deep sleep
-void setup() { 
-  M5.begin();
 
-  setCpuFrequencyMhz(80); // Reduce CPU frequency to save power, default 240Mhz?
+// Shutdown the SH200Q IMU, not controlled by the AXP
+// https://github.com/eggfly/M5StickCProjects/blob/master/demo/StickWatch2PowerManagment/StickWatch2PowerManagment.ino
+void shutdownSH200Q() {
+  Wire.beginTransmission(0x6C);
+  Wire.write(0x75);
+  byte success = Wire.endTransmission(false);
+  //Serial.printf("success: %d \n", success);
+  byte byteCount = Wire.requestFrom(0x6C, 1);
+  //Serial.printf("byteCount: %d \n", byteCount);
+  uint8_t data = Wire.read();
+  // uint8_t b = read_register(0x6C, 0x0E);
+  //Serial.print("byte: ");
+  //Serial.println(data, BIN);
 
-  M5.axp.EnableCoulombcounter();
-
-  M5.Lcd.setTextSize(2); // 1 = smallest
-  M5.Lcd.setTextColor(GREEN, BLACK);
-  M5.Lcd.setTextDatum(TC_DATUM); // Text Top Centre Datum - Where in the text should the x, y position refer to
-  M5.Lcd.drawString("Water", 40, 10); // X, Y, Font
- 
-  pinMode(INPUT_PIN, INPUT);
-  pinMode(PUMP_PIN, OUTPUT);
-  pinMode(M5_LED, OUTPUT);
-  digitalWrite(M5_LED, HIGH);
-  
-  //pinMode(25, OUTPUT);  // G25 is shared with G36, but not sure why they were set low here?
-  //digitalWrite(25, 0);
+  Wire.beginTransmission(0x6C);
+  Wire.write(0x75);
+  Wire.write(0x80);  // SH200Q shutdown mode (only i2c alive)
+  byte succ = Wire.endTransmission();
+  //Serial.printf("succ: %d \n", succ);
 }
 
+// https://github.com/eggfly/M5StickCProjects/blob/master/demo/StickWatch2PowerManagment/StickWatch2PowerManagment.ino
+void shutdown_all_except_self() {
+  Wire.beginTransmission(0x34);
+  Wire.write(0x12);
+  Wire.write(0x01);
+  Wire.endTransmission();
+}
+
+
 // Convert Battery Voltage to Battery %
+// Thanks to  https://github.com/eggfly/M5StickCProjects/blob/master/StickWatch2/battery.h
 static const float levels[] = {4.13, 4.06, 3.98, 3.92, 3.87, 3.82, 3.79, 3.77, 3.74, 3.68, 3.45, 3.00};
 int getBatteryLevel(float voltage) {
   float level = 1;
@@ -75,9 +85,10 @@ int getBatteryLevel(float voltage) {
   return level * 100;
 }
 
+
 // Print ADC Value
 void outputADC(int rawADC) {
-  M5.Lcd.drawString("ADC:", 40, 63); // X, Y, Font
+  M5.Lcd.drawString(" ADC: ", 40, 63); // X, Y, Font
   M5.Lcd.drawString(String(rawADC), 40, 80); 
   
   // Serial.print("ADC value: ");
@@ -97,62 +108,139 @@ void outputBatt() {
 }
 
 
+// Blink the inbuild LED
+void blinkLED(void * parameter) {
+  while (true) {
+    digitalWrite(M5_LED, LOW); // LED On
+    //delay(100);
+    vTaskDelay(500 / portTICK_PERIOD_MS);  // Pause the task for 500ms
+    digitalWrite(M5_LED, HIGH); // LED On
+    //delay(100);
+    vTaskDelay(500 / portTICK_PERIOD_MS); // Pause the task for 500ms
+  }
+}
+
+void myDeepSleep(int seconds) {
+  // ToDo What else can we turn off here to save power?
+  shutdownSH200Q(); // Shutdown the IMU (not controlled by the AXP)
+  shutdown_all_except_self(); 
+  M5.Axp.DeepSleep(SLEEP_SEC(seconds)); // Button A will wake us up straight away
+}
+
+// Run every time after a deep sleep
+void setup() { 
+
+  setCpuFrequencyMhz(80); // Reduce CPU frequency to save power, default 240Mhz?
+  
+  // Replace with specific commands we need to save power
+  //M5.begin();
+
+  //Serial.begin(115200);
+  // Don't power up RTC nor Microphone
+  // M5.Axp.begin(disableLDO2, disableLDO3, disableRTC, disableDCDC1, disableDCDC3, disableLDO0);
+  // LDO1 - RTC, LDO2 - LCD BackLight, LDO3 - LCD Logic, DCDC1 - ESP 3V3 & MPU6886, DCDC3 - ??, GPIO0 (LDO0) - Mic
+  M5.Axp.begin(false, false, true, false, false, true);
+  M5.Lcd.begin();
+  shutdownSH200Q(); // Shutdown the IMU (not controlled by the AXP)  SH200Q or MPU6886?
+  //M5.Rtc.begin();
+
+  // M5.axp.EnableCoulombcounter(); // Doesnt seem to work, perhaps not saved across a deep sleep?
+
+  M5.Lcd.setTextSize(2); // 1 = smallest
+  M5.Lcd.setTextColor(GREEN, BLACK);
+  M5.Lcd.setTextDatum(TC_DATUM); // Top Centre - Sets where in the text the drawString x, y position refers to
+  M5.Lcd.drawString("Water", 40, 10); // X, Y, Font
+ 
+  pinMode(INPUT_PIN, INPUT);
+  pinMode(PUMP_PIN, OUTPUT);
+  pinMode(M5_LED, OUTPUT);
+  digitalWrite(M5_LED, HIGH); // Make sure LED is off
+  
+  //pinMode(25, OUTPUT);  // G25 is shared with G36, but not sure why they were set low here?
+  //digitalWrite(25, 0);
+}
+
+
 void loop() { 
 
   // Print battery state
   outputBatt();
   
-  // TODO Red led on if GetWarningLevel is 2, flash if 1?
-  //digitalWrite(M5_LED, LOW); // LED On
-  //delay(2000);
-  //digitalWrite(M5_LED, HIGH); // LED Off
-
-  // If Button B is pressed, reset waterADC value and increase by 20 every 200ms until button released
-  int first = true; // First time through the Reset Watering ADC value loop?
-  while(M5.BtnB.read()){
-    if (first) { // First time through this loop reset to 490
-      waterADC = 490;
-      first = false;
-    }
-    waterADC += 20;  // Every time through this loop (whilst button still pressed) increase waterADC value and display
-    // ToDo This is not saved, as deep sleep looses it!!!!
-    M5.Lcd.drawString("Set:", 40, 63); // X, Y, Font
-    M5.Lcd.drawString(String(waterADC), 40, 80);
-    delay(200); 
+  // If battery level low blink in built red LED
+  if (getBatteryLevel(M5.Axp.GetBatVoltage()) < 15) {
+    // digitalWrite(M5_LED, LOW); // LED On
+    // Flash LED through seperate task that runs in the background
+    // xTaskCreate(Function, Name, Stack, Parameter, Priority, Handle)
+    TaskHandle_t blinkTask;
+    xTaskCreate(blinkLED, "Blink LED", 1000, NULL, 1, &blinkTask);
   }
-  if (!first) { // If we have just set waterADC, leave it displayed for 2 seconds.
+
+
+  // If Button B is pressed, display current waterADC, then after 2 seconds reset waterADC value and increase by 20 every 200ms until button released
+  int first = true; // First time through the Reset Watering ADC value loop
+  int second = false; // Second time through the Reset Watering ADC value loop
+  int third = false; // Third time or greater through the Reset Watering ADC value loop
+  int reset = false; // Have we reset waterADC this loop()?
+  while(M5.BtnB.read()){
+    // Third or greater time through this loop increment waterADC and display
+    if (third) {
+      waterADC += 10;  // Every time through this loop (whilst button still pressed) increase waterADC value and display
+      M5.Lcd.drawString(" Set: ", 40, 63); // X, Y, Font
+      M5.Lcd.drawString(String(waterADC), 40, 80);
+      delay(250); 
+    }
+    // Second time through this loop reset waterADC to 990 + 10 
+    if (second) {
+      waterADC = 990;
+      reset = true;
+      second = false;
+      third = true;
+    }
+    // First time through this loop print current value of waterADC, and pause for 2 seconds to give user chance to release the button and not reset it.
+    if (first) { 
+      M5.Lcd.drawString("Curr:", 40, 63); // X, Y, Font
+      M5.Lcd.drawString(String(waterADC), 40, 80);
+      delay(2000); // Leave current value printed for 2 seconds
+      first = false;
+      second = true;
+    }
+  }
+  if (reset) { // If we have just set waterADC, leave it displayed for 2 seconds.
     delay(2000);
   }
+
 
   // If water is needed, turn pump on, with a limited maximum time watering
   int timeWatering = 0; // How long have we been watering for this loop?
   int water = true; // Remain in the Watering loop?
   while (water) {
+    
     rawADC = analogRead(INPUT_PIN);
     outputADC(rawADC);
-    if (rawADC < waterADC) {
+    
+    if (rawADC > waterADC) {
       digitalWrite(PUMP_PIN, HIGH);
     } else {
       digitalWrite(PUMP_PIN, LOW);
       water = false;
     } 
 
-    timeWatering += 500;
-    // Leave watering on for a maximum of X ms each time we wake up
-    if (timeWatering > 2000) {
+    timeWatering += 5;
+    // Leave watering on for a maximum of 50 10th s each time we wake up
+    if (timeWatering > 50) {
       digitalWrite(PUMP_PIN, LOW);
       water = false;
     }
     
-    delay(500); // Test and display the ADC reading every Xms
+    delay(500); // Test water level and display every Xms
   }
 
   // Update printed battery state
   outputBatt();
 
+  // Leave display on for X ms so it can be read
   delay(2000);
-
-  // ToDo What else can we turn off here to save power?
-  M5.Axp.DeepSleep(SLEEP_SEC(5)); // Button A will wake us up straight away
   
+  // Go to sleep until button is pressed or X seconds, whichever is sooner
+  myDeepSleep(60);
 }
