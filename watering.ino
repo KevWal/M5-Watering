@@ -146,6 +146,7 @@ void setup() {
 
   // M5.axp.EnableCoulombcounter(); // Doesnt seem to work, perhaps not saved across a deep sleep?
 
+  M5.Lcd.setRotation(2);
   M5.Lcd.setTextSize(2); // 1 = smallest
   M5.Lcd.setTextColor(GREEN, BLACK);
   M5.Lcd.setTextDatum(TC_DATUM); // Top Centre - Sets where in the text the drawString x, y position refers to
@@ -191,7 +192,7 @@ void loop() {
     }
     // Second time through this loop reset waterADC to 990 + 10 
     if (second) {
-      waterADC = 990;
+      waterADC = 1390;
       reset = true;
       second = false;
       third = true;
@@ -242,5 +243,5 @@ void loop() {
   delay(2000);
   
   // Go to sleep until button is pressed or X seconds, whichever is sooner
-  myDeepSleep(60);
+  myDeepSleep(600);
 }
