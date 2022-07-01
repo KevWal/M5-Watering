@@ -1,5 +1,6 @@
 #include <M5StickC.h>
 #include <Wire.h>
+#include <WiFi.h>
 
 #define INPUT_PIN 33
 #define PUMP_PIN 32
@@ -8,6 +9,8 @@
 #define I2C_SCL 26
 #define SHT_ADDRESS 0x44
 
+// WiFi SSID & Password defined in an external file excluded from Github
+#include "ssid.h"
 
 // M5 Stick C LCD is 80 x 160
 
@@ -114,7 +117,7 @@ void outputBatt() {
   }
 }
 
-
+// Get and print temperature
 void outputTemperature() {
   unsigned int data[6];
   float temp = 0.0;
@@ -156,6 +159,32 @@ void outputTemperature() {
 }
 
 
+// setup function for WiFi connection
+void setupWiFi() {
+  int loop_count = 0;
+  
+  Serial.printf("\r\n[Wifi]: Connecting");
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    loop_count += 1;
+    //Serial.printf(".");
+    M5.Lcd.drawString("WiFi", 40, 27);
+    delay(250);
+    M5.Lcd.drawString("    ", 40, 27);
+    delay(250);
+    if (loop_count >= 100) {
+      M5.Lcd.drawString("No WiFi", 40, 27);
+      return; // Exit setupWiFi
+    }
+  }
+  
+  IPAddress localIP = WiFi.localIP();
+  //Serial.printf("connected!\r\n[WiFi]: IP-Address is %d.%d.%d.%d\r\n", localIP[0], localIP[1], localIP[2], localIP[3]);
+  M5.Lcd.drawString(String(localIP[3]), 40, 27);
+}
+
+
 // Blink the inbuild LED
 void blinkLED(void * parameter) {
   while (true) {
@@ -187,15 +216,18 @@ void setup() {
 
   setCpuFrequencyMhz(80); // Reduce CPU frequency to save power, default 240Mhz?
   
-  // Replace with specific commands we need to save power
-  //M5.begin();
+  // Replaced with specific commands we need to save power
+  //M5.begin(); // Calls Serial.begin, Axp.begin and LCD.begin
 
   //Serial.begin(115200);
+
+  // LDO2: Display backlight. LDO3: Display Control. RTC: Always ON, Switch RTC charging. DCDC1: Main rail - when not set the controller shuts down. DCDC3: Use unknown.  LDO0: MIC
+  // begin(bool disableLDO2 = false, bool disableLDO3 = false, bool disableRTC = false, bool disableDCDC1 = false, bool disableDCDC3 = false, bool disableLDO0 = false);
   // Don't power up RTC nor Microphone
-  // M5.Axp.begin(disableLDO2, disableLDO3, disableRTC, disableDCDC1, disableDCDC3, disableLDO0);
-  // LDO1 - RTC, LDO2 - LCD BackLight, LDO3 - LCD Logic, DCDC1 - ESP 3V3 & MPU6886, DCDC3 - ??, GPIO0 (LDO0) - Mic
   M5.Axp.begin(false, false, true, false, false, true);
+  
   M5.Lcd.begin();
+  
   shutdownSH200Q(); // Shutdown the IMU (not controlled by the AXP)  SH200Q or MPU6886?
   //M5.Rtc.begin();
 
@@ -211,6 +243,8 @@ void setup() {
   pinMode(PUMP_PIN, OUTPUT);
   pinMode(M5_LED, OUTPUT);
   digitalWrite(M5_LED, HIGH); // Make sure LED is off
+
+  setupWiFi();
   
   //pinMode(25, OUTPUT);  // G25 is shared with G36, but not sure why they were set low here?
   //digitalWrite(25, 0);
