@@ -127,6 +127,12 @@ void myDeepSleep(int seconds) {
   M5.Axp.DeepSleep(SLEEP_SEC(seconds)); // Button A will wake us up straight away
 }
 
+void myLightSleep(int seconds) {
+  M5.Axp.SetLDO2(false); // turn off power to LCD
+  M5.Axp.LightSleep(SLEEP_SEC(seconds)); // Button A will wake us up straight away
+  M5.Axp.SetLDO2(true); // turn on power to LCD
+}
+
 // Run every time after a deep sleep
 void setup() { 
 
@@ -166,9 +172,20 @@ void loop() {
 
   // Print battery state
   outputBatt();
+
+  // If rawADC 10% above or below waterADC keep in built red LED on
+  bool ledOn = false;
+  rawADC = analogRead(INPUT_PIN);
+  if (rawADC > (waterADC * 1.1) || rawADC < (waterADC * 0.9)) {
+    digitalWrite(M5_LED, LOW); // LED On
+    ledOn = true;
+  } else {
+    digitalWrite(M5_LED, HIGH); // LED Off
+    ledOn = false;
+  }
   
-  // If battery level low blink in built red LED
-  if (getBatteryLevel(M5.Axp.GetBatVoltage()) < 15) {
+  // If battery level low (and LED not already on solid) then blink in built red LED
+  if (getBatteryLevel(M5.Axp.GetBatVoltage()) < 15 && !ledOn) {
     // digitalWrite(M5_LED, LOW); // LED On
     // Flash LED through seperate task that runs in the background
     // xTaskCreate(Function, Name, Stack, Parameter, Priority, Handle)
@@ -176,12 +193,11 @@ void loop() {
     xTaskCreate(blinkLED, "Blink LED", 1000, NULL, 1, &blinkTask);
   }
 
-
   // If Button B is pressed, display current waterADC, then after 2 seconds reset waterADC value and increase by 20 every 200ms until button released
-  int first = true; // First time through the Reset Watering ADC value loop
-  int second = false; // Second time through the Reset Watering ADC value loop
-  int third = false; // Third time or greater through the Reset Watering ADC value loop
-  int reset = false; // Have we reset waterADC this loop()?
+  bool first = true; // First time through the Reset Watering ADC value loop
+  bool second = false; // Second time through the Reset Watering ADC value loop
+  bool third = false; // Third time or greater through the Reset Watering ADC value loop
+  bool reset = false; // Have we reset waterADC this loop()?
   while(M5.BtnB.read()){
     // Third or greater time through this loop increment waterADC and display
     if (third) {
@@ -190,7 +206,7 @@ void loop() {
       M5.Lcd.drawString(String(waterADC), 40, 80);
       delay(250); 
     }
-    // Second time through this loop reset waterADC to 990 + 10 
+    // Second time through this loop reset waterADC to lowest sensible value
     if (second) {
       waterADC = 1390;
       reset = true;
@@ -213,7 +229,7 @@ void loop() {
 
   // If water is needed, turn pump on, with a limited maximum time watering
   int timeWatering = 0; // How long have we been watering for this loop?
-  int water = true; // Remain in the Watering loop?
+  bool water = true; // Remain in the Watering loop?
   while (water) {
     
     rawADC = analogRead(INPUT_PIN);
@@ -243,5 +259,5 @@ void loop() {
   delay(2000);
   
   // Go to sleep until button is pressed or X seconds, whichever is sooner
-  myDeepSleep(600);
+  myDeepSleep(10);
 }
