@@ -1,7 +1,13 @@
 #include <M5StickC.h>
+#include <Wire.h>
 
 #define INPUT_PIN 33
 #define PUMP_PIN 32
+
+#define I2C_SDA 0
+#define I2C_SCL 26
+#define SHT_ADDRESS 0x44
+
 
 // M5 Stick C LCD is 80 x 160
 
@@ -30,6 +36,7 @@ void shutdownSH200Q() {
   //Serial.printf("succ: %d \n", succ);
 }
 
+
 // https://github.com/eggfly/M5StickCProjects/blob/master/demo/StickWatch2PowerManagment/StickWatch2PowerManagment.ino
 void shutdown_all_except_self() {
   Wire.beginTransmission(0x34);
@@ -41,11 +48,11 @@ void shutdown_all_except_self() {
 
 // Convert Battery Voltage to Battery %
 // Thanks to  https://github.com/eggfly/M5StickCProjects/blob/master/StickWatch2/battery.h
-static const float levels[] = {4.13, 4.06, 3.98, 3.92, 3.87, 3.82, 3.79, 3.77, 3.74, 3.68, 3.45, 3.00};
+static const float levels[] = {4.14, 4.06, 3.98, 3.92, 3.87, 3.82, 3.79, 3.77, 3.74, 3.68, 3.45, 3.00};
 int getBatteryLevel(float voltage) {
   float level = 1;
   if (voltage >= levels[0]) {
-    level = 1;
+    level = 1; // Maximum output of 100%
   } else if (voltage >= levels[1]) {
     level = 0.9;
     level += 0.1 * (voltage - levels[1]) / (levels[0] - levels[1]);
@@ -99,12 +106,53 @@ void outputADC(int rawADC) {
 // Print Battery / Charge Value
 void outputBatt() {
   if (M5.Axp.GetBatChargeCurrent() > 1) {
-    M5.Lcd.drawString("Chrg:", 40, 123); 
-    M5.Lcd.drawString(String(int(M5.Axp.GetBatChargeCurrent())) + "mA", 40, 140);  
+    //M5.Lcd.drawString("Chrg:", 40, 123); 
+    M5.Lcd.drawString("C " + String(int(M5.Axp.GetBatChargeCurrent())) + "mA", 40, 140);  
   } else {
-    M5.Lcd.drawString("Batt:", 40, 123); 
-    M5.Lcd.drawString(String(getBatteryLevel(M5.Axp.GetBatVoltage())) + "%", 40, 140);  
+    //M5.Lcd.drawString("Batt:", 40, 123); 
+    M5.Lcd.drawString("B " + String(getBatteryLevel(M5.Axp.GetBatVoltage())) + "%", 40, 140);  
   }
+}
+
+
+void outputTemperature() {
+  unsigned int data[6];
+  float temp = 0.0;
+
+  // Startup I2C for the SHT30 temperature sensor - I2C_SDA = 0, I2C_SCL = 26.
+  Wire.begin(I2C_SDA,I2C_SCL);
+
+  // Start I2C Transmission
+  Wire.beginTransmission(SHT_ADDRESS);
+  // Send measurement command
+  Wire.write(0x2C);
+  Wire.write(0x06);
+  // Stop I2C transmission
+  // stat1 = 
+  Wire.endTransmission();
+
+  delay(500);
+
+  // Request 6 bytes of data
+  Wire.requestFrom(SHT_ADDRESS, 6);
+
+  // Read 6 bytes of data
+  // cTemp msb, cTemp lsb, cTemp crc, humidity msb, humidity lsb, humidity crc
+  for (int i=0;i<6;i++) {
+    data[i]=Wire.read();
+  };
+
+  delay(50);
+
+  // Should be 0
+  // stat2 = Wire.available();
+
+  // Convert the data
+  temp = ((((data[0] * 256.0) + data[1]) * 175) / 65535.0) - 45;
+
+  //M5.Lcd.setCursor(0, 10, 106);
+  //M5.Lcd.printf("T %2.1f", temp);
+  M5.Lcd.drawString("T " + String(temp,1), 40, 123);  
 }
 
 
@@ -132,6 +180,7 @@ void myLightSleep(int seconds) {
   M5.Axp.LightSleep(SLEEP_SEC(seconds)); // Button A will wake us up straight away
   M5.Axp.SetLDO2(true); // turn on power to LCD
 }
+
 
 // Run every time after a deep sleep
 void setup() { 
@@ -172,6 +221,7 @@ void loop() {
 
   // Print battery state
   outputBatt();
+  outputTemperature();
 
   // If rawADC 10% above or below waterADC keep in built red LED on
   bool ledOn = false;
@@ -254,6 +304,7 @@ void loop() {
 
   // Update printed battery state
   outputBatt();
+  outputTemperature();
 
   // Leave display on for X ms so it can be read
   delay(2000);
