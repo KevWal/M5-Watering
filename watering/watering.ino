@@ -2,14 +2,14 @@
 #include <Wire.h>
 #include <WiFi.h>
 
-#define INPUT_PIN 33
+#define INPUT_PIN 33 // Water Sensor
 #define PUMP_PIN 32
 
 #define I2C_SDA 0
 #define I2C_SCL 26
-#define SHT_ADDRESS 0x44
+#define SHT_ADDRESS 0x44 //SHT30 Temperature Sensor
 
-// WiFi SSID & Password defined in an external file excluded from Github
+// WiFi SSID & PASSWORD defined in an external file excluded from Github
 #include "ssid.h"
 
 // M5 Stick C LCD is 80 x 160
@@ -169,19 +169,21 @@ void setupWiFi() {
   while (WiFi.status() != WL_CONNECTED) {
     loop_count += 1;
     //Serial.printf(".");
-    M5.Lcd.drawString("WiFi", 40, 27);
+    M5.Lcd.drawString("WiFi", 40, 22);
     delay(250);
-    M5.Lcd.drawString("    ", 40, 27);
+    M5.Lcd.drawString("    ", 40, 22);
     delay(250);
+
+    // If we don't get WiFi within 100 loops give up and move on
     if (loop_count >= 100) {
-      M5.Lcd.drawString("No WiFi", 40, 27);
+      M5.Lcd.drawString("No WiFi", 45, 22);
       return; // Exit setupWiFi
     }
   }
   
   IPAddress localIP = WiFi.localIP();
   //Serial.printf("connected!\r\n[WiFi]: IP-Address is %d.%d.%d.%d\r\n", localIP[0], localIP[1], localIP[2], localIP[3]);
-  M5.Lcd.drawString(String(localIP[3]), 40, 27);
+  M5.Lcd.drawString("." + String(localIP[3]), 40, 22);
 }
 
 
@@ -233,11 +235,11 @@ void setup() {
 
   // M5.axp.EnableCoulombcounter(); // Doesnt seem to work, perhaps not saved across a deep sleep?
 
-  M5.Lcd.setRotation(2);
+  M5.Lcd.setRotation(2); // Vertical, USB C at top
   M5.Lcd.setTextSize(2); // 1 = smallest
   M5.Lcd.setTextColor(GREEN, BLACK);
   M5.Lcd.setTextDatum(TC_DATUM); // Top Centre - Sets where in the text the drawString x, y position refers to
-  M5.Lcd.drawString("Water", 40, 10); // X, Y, Font
+  M5.Lcd.drawString("Water", 40, 5); // X, Y, Font
  
   pinMode(INPUT_PIN, INPUT);
   pinMode(PUMP_PIN, OUTPUT);
