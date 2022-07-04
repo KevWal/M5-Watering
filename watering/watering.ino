@@ -1,6 +1,11 @@
 #include <M5StickC.h>
+#undef min // Workaround https://github.com/m5stack/M5Stack/issues/97
 #include <Wire.h>
 #include <WiFi.h>
+#include <SinricPro.h>
+#include "SinricProTemperaturesensor.h"
+
+// Document library versions here...
 
 #define INPUT_PIN 33 // Water Sensor
 #define PUMP_PIN 32
@@ -9,10 +14,20 @@
 #define I2C_SCL 26
 #define SHT_ADDRESS 0x44 //SHT30 Temperature Sensor
 
-// WiFi SSID & PASSWORD defined in an external file excluded from Github
+// WIFI_SSID & WIFI_PASS defined in an external file excluded from Github
+// Also used for SinricPro APP_KEY, APP_SECRET & TEMP_SENSOR_ID
 #include "ssid.h"
 
 // M5 Stick C LCD is 80 x 160
+#define LINE1 5
+#define LINE2 22
+
+#define LINE4 63
+#define LINE5 80
+
+#define LINE7 123
+#define LINE8 140
+
 
 int rawADC; // Value read from ADC
 RTC_DATA_ATTR int waterADC = 1900; // ADC Level at which we turn on watering, save in RTC memory to keep across a deep sleep
@@ -98,26 +113,27 @@ int getBatteryLevel(float voltage) {
 
 // Print ADC Value
 void outputADC(int rawADC) {
-  M5.Lcd.drawString(" ADC: ", 40, 63); // X, Y, Font
-  M5.Lcd.drawString(String(rawADC), 40, 80); 
+  M5.Lcd.drawString(" ADC: ", 40, LINE4); // X, Y, Font
+  M5.Lcd.drawString(String(rawADC), 40, LINE5); 
   
   // Serial.print("ADC value: ");
   // Serial.println(rawADC);
 }
 
 
-// Print Battery / Charge Value
+// Get and Print Battery / Charge Value
 void outputBatt() {
   if (M5.Axp.GetBatChargeCurrent() > 1) {
-    //M5.Lcd.drawString("Chrg:", 40, 123); 
-    M5.Lcd.drawString("C " + String(int(M5.Axp.GetBatChargeCurrent())) + "mA", 40, 140);  
+    //M5.Lcd.drawString("Chrg:", 40, LINE7); 
+    M5.Lcd.drawString("C " + String(int(M5.Axp.GetBatChargeCurrent())) + "mA", 40, LINE8);  
   } else {
-    //M5.Lcd.drawString("Batt:", 40, 123); 
-    M5.Lcd.drawString("B " + String(getBatteryLevel(M5.Axp.GetBatVoltage())) + "%", 40, 140);  
+    //M5.Lcd.drawString("Batt:", 40, LINE7); 
+    M5.Lcd.drawString("B " + String(getBatteryLevel(M5.Axp.GetBatVoltage())) + "%", 40, LINE8);  
   }
 }
 
-// Get and print temperature
+
+// Get, Print and send to Alexa Temperature Value
 void outputTemperature() {
   unsigned int data[6];
   float temp = 0.0;
@@ -155,7 +171,15 @@ void outputTemperature() {
 
   //M5.Lcd.setCursor(0, 10, 106);
   //M5.Lcd.printf("T %2.1f", temp);
-  M5.Lcd.drawString("T " + String(temp,1), 40, 123);  
+  M5.Lcd.drawString("T " + String(temp,1), 40, LINE7);  
+
+  // Report temperature to Alexa
+  SinricPro.handle();
+  SinricProTemperaturesensor &mySensor = SinricPro[TEMP_SENSOR_ID];  // get temperaturesensor device
+  bool success = mySensor.sendTemperatureEvent(temp, 0); // send event
+  //if (!success) {  // if sending event failed, print error message
+  //  Serial.printf("Something went wrong...could not send Event to server!\r\n");
+  //} 
 }
 
 
@@ -169,21 +193,35 @@ void setupWiFi() {
   while (WiFi.status() != WL_CONNECTED) {
     loop_count += 1;
     //Serial.printf(".");
-    M5.Lcd.drawString("WiFi", 40, 22);
+    M5.Lcd.drawString("WiFi", 40, LINE2);
     delay(250);
-    M5.Lcd.drawString("    ", 40, 22);
+    M5.Lcd.drawString("    ", 40, LINE2);
     delay(250);
 
     // If we don't get WiFi within 100 loops give up and move on
     if (loop_count >= 100) {
-      M5.Lcd.drawString("No WiFi", 45, 22);
+      M5.Lcd.drawString("No WiFi", 45, LINE2);
       return; // Exit setupWiFi
     }
   }
   
   IPAddress localIP = WiFi.localIP();
   //Serial.printf("connected!\r\n[WiFi]: IP-Address is %d.%d.%d.%d\r\n", localIP[0], localIP[1], localIP[2], localIP[3]);
-  M5.Lcd.drawString("." + String(localIP[3]), 40, 22);
+  M5.Lcd.drawString("." + String(localIP[3]), 40, LINE2);
+}
+
+
+// setup function for SinricPro
+void setupSinricPro() {
+  // add device to SinricPro
+  SinricProTemperaturesensor &mySensor = SinricPro[TEMP_SENSOR_ID];
+  //mySensor.onPowerState(onPowerState);
+
+  // setup SinricPro
+  //SinricPro.onConnected([](){ Serial.printf("Connected to SinricPro\r\n"); }); 
+  //SinricPro.onDisconnected([](){ Serial.printf("Disconnected from SinricPro\r\n"); });
+  //SinricPro.restoreDeviceStates(true); // Uncomment to restore the last known state from the server.
+  SinricPro.begin(APP_KEY, APP_SECRET);
 }
 
 
@@ -239,7 +277,7 @@ void setup() {
   M5.Lcd.setTextSize(2); // 1 = smallest
   M5.Lcd.setTextColor(GREEN, BLACK);
   M5.Lcd.setTextDatum(TC_DATUM); // Top Centre - Sets where in the text the drawString x, y position refers to
-  M5.Lcd.drawString("Water", 40, 5); // X, Y, Font
+  M5.Lcd.drawString("Water", 40, LINE1); // X, Y, Font
  
   pinMode(INPUT_PIN, INPUT);
   pinMode(PUMP_PIN, OUTPUT);
@@ -247,6 +285,9 @@ void setup() {
   digitalWrite(M5_LED, HIGH); // Make sure LED is off
 
   setupWiFi();
+
+  // SinricPro reports to Alexa
+  setupSinricPro();
   
   //pinMode(25, OUTPUT);  // G25 is shared with G36, but not sure why they were set low here?
   //digitalWrite(25, 0);
@@ -288,8 +329,8 @@ void loop() {
     // Third or greater time through this loop increment waterADC and display
     if (third) {
       waterADC += 10;  // Every time through this loop (whilst button still pressed) increase waterADC value and display
-      M5.Lcd.drawString(" Set: ", 40, 63); // X, Y, Font
-      M5.Lcd.drawString(String(waterADC), 40, 80);
+      M5.Lcd.drawString(" Set: ", 40, LINE4); // X, Y, Font
+      M5.Lcd.drawString(String(waterADC), 40, LINE5);
       delay(250); 
     }
     // Second time through this loop reset waterADC to lowest sensible value
@@ -301,8 +342,8 @@ void loop() {
     }
     // First time through this loop print current value of waterADC, and pause for 2 seconds to give user chance to release the button and not reset it.
     if (first) { 
-      M5.Lcd.drawString("Curr:", 40, 63); // X, Y, Font
-      M5.Lcd.drawString(String(waterADC), 40, 80);
+      M5.Lcd.drawString("Curr:", 40, LINE4); // X, Y, Font
+      M5.Lcd.drawString(String(waterADC), 40, LINE5);
       delay(2000); // Leave current value printed for 2 seconds
       first = false;
       second = true;
@@ -340,7 +381,6 @@ void loop() {
 
   // Update printed battery state
   outputBatt();
-  outputTemperature();
 
   // Leave display on for X ms so it can be read
   delay(2000);
