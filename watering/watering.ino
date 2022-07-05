@@ -3,7 +3,7 @@
 #include <Wire.h>
 #include <WiFi.h>
 #include <SinricPro.h>
-#include "SinricProTemperaturesensor.h"
+#include <SinricProTemperaturesensor.h>
 
 // Document library versions here...
 
@@ -28,7 +28,13 @@
 #define LINE7 123
 #define LINE8 140
 
+#define DEBUG_ESP_PORT serial
 
+// NODEBUG_WEBSOCKETS
+// NDEBUG
+// NODEBUG_SINRIC
+
+ 
 int rawADC; // Value read from ADC
 RTC_DATA_ATTR int waterADC = 1900; // ADC Level at which we turn on watering, save in RTC memory to keep across a deep sleep
 
@@ -133,6 +139,13 @@ void outputBatt() {
 }
 
 
+// SinricPro has to be able to send a device on / off message, we just ignore it
+bool onPowerState(const String &deviceId, bool &state) {
+  Serial.printf("Temperaturesensor turned %s (via SinricPro) \r\n", state?"on":"off");
+  return true; // request handled properly
+}
+
+
 // Get, Print and send to Alexa Temperature Value
 void outputTemperature() {
   unsigned int data[6];
@@ -177,9 +190,10 @@ void outputTemperature() {
   SinricPro.handle();
   SinricProTemperaturesensor &mySensor = SinricPro[TEMP_SENSOR_ID];  // get temperaturesensor device
   bool success = mySensor.sendTemperatureEvent(temp, 0); // send event
-  //if (!success) {  // if sending event failed, print error message
-  //  Serial.printf("Something went wrong...could not send Event to server!\r\n");
-  //} 
+  if (!success) {  // if sending event failed, print error message
+    Serial.printf("SinricPro: Something went wrong...could not send Event to server!\r\n");
+  } 
+  SinricPro.handle();
 }
 
 
@@ -206,7 +220,7 @@ void setupWiFi() {
   }
   
   IPAddress localIP = WiFi.localIP();
-  //Serial.printf("connected!\r\n[WiFi]: IP-Address is %d.%d.%d.%d\r\n", localIP[0], localIP[1], localIP[2], localIP[3]);
+  Serial.printf("WiFi connected!\r\n[WiFi]: IP-Address is %d.%d.%d.%d\r\n", localIP[0], localIP[1], localIP[2], localIP[3]);
   M5.Lcd.drawString("." + String(localIP[3]), 40, LINE2);
 }
 
@@ -215,13 +229,14 @@ void setupWiFi() {
 void setupSinricPro() {
   // add device to SinricPro
   SinricProTemperaturesensor &mySensor = SinricPro[TEMP_SENSOR_ID];
-  //mySensor.onPowerState(onPowerState);
-
-  // setup SinricPro
-  //SinricPro.onConnected([](){ Serial.printf("Connected to SinricPro\r\n"); }); 
-  //SinricPro.onDisconnected([](){ Serial.printf("Disconnected from SinricPro\r\n"); });
+  mySensor.onPowerState(onPowerState);
+  
+  SinricPro.onConnected([](){ Serial.printf("Connected to SinricPro\r\n"); }); 
+  SinricPro.onDisconnected([](){ Serial.printf("Disconnected from SinricPro\r\n"); });
   //SinricPro.restoreDeviceStates(true); // Uncomment to restore the last known state from the server.
   SinricPro.begin(APP_KEY, APP_SECRET);
+
+  mySensor.sendPowerStateEvent(1, "Awake");
 }
 
 
@@ -254,21 +269,21 @@ void myLightSleep(int seconds) {
 // Run every time after a deep sleep
 void setup() { 
 
-  setCpuFrequencyMhz(80); // Reduce CPU frequency to save power, default 240Mhz?
+  //setCpuFrequencyMhz(80); // Reduce CPU frequency to save power, default 240Mhz?
   
   // Replaced with specific commands we need to save power
-  //M5.begin(); // Calls Serial.begin, Axp.begin and LCD.begin
+  M5.begin(); // Calls Serial.begin, Axp.begin and LCD.begin
 
-  //Serial.begin(115200);
+  Serial.begin(115200);
 
   // LDO2: Display backlight. LDO3: Display Control. RTC: Always ON, Switch RTC charging. DCDC1: Main rail - when not set the controller shuts down. DCDC3: Use unknown.  LDO0: MIC
   // begin(bool disableLDO2 = false, bool disableLDO3 = false, bool disableRTC = false, bool disableDCDC1 = false, bool disableDCDC3 = false, bool disableLDO0 = false);
   // Don't power up RTC nor Microphone
-  M5.Axp.begin(false, false, true, false, false, true);
+  // O1 M5.Axp.begin(false, false, true, false, false, true);
   
-  M5.Lcd.begin();
+  // O1 M5.Lcd.begin();
   
-  shutdownSH200Q(); // Shutdown the IMU (not controlled by the AXP)  SH200Q or MPU6886?
+  //shutdownSH200Q(); // Shutdown the IMU (not controlled by the AXP)  SH200Q or MPU6886?
   //M5.Rtc.begin();
 
   // M5.axp.EnableCoulombcounter(); // Doesnt seem to work, perhaps not saved across a deep sleep?
@@ -384,7 +399,10 @@ void loop() {
 
   // Leave display on for X ms so it can be read
   delay(2000);
-  
+
+  SinricProTemperaturesensor &mySensor = SinricPro[TEMP_SENSOR_ID];
+  mySensor.sendPowerStateEvent(0, "Deep_Sleep");
+
   // Go to sleep until button is pressed or X seconds, whichever is sooner
   myDeepSleep(10);
 }
