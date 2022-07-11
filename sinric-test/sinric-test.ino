@@ -38,7 +38,7 @@
 #include "ssid.h"
 
 #define BAUD_RATE         115200               // Change baudrate to your need (used for serial monitor)
-#define EVENT_WAIT_TIME   60000               // send event every 66 seconds
+#define EVENT_WAIT_TIME   60000               // send event every 60 seconds
 
 bool deviceIsOn;                              // Temeprature sensor on/off state
 float humidity;                               // actual humidity
@@ -90,7 +90,7 @@ void handleTemperaturesensor() {
   if (temperature == lastTemperature || humidity == lastHumidity) return; // if no values changed do nothing...
 
   SinricProTemperaturesensor &mySensor = SinricPro[TEMP_SENSOR_ID];  // get temperaturesensor device
-  Serial.printf("KW handleTemperaturesensor(): Time to call mySensor.sendTemperatureEvent");
+  Serial.printf("KW handleTemperaturesensor(): Time to call mySensor.sendTemperatureEvent\r\n");
   bool success = mySensor.sendTemperatureEvent(temperature, humidity); // send event
   if (success) {  // if event was sent successfuly, print temperature and humidity to serial
     Serial.printf("KW handleTemperaturesensor(): Success - Temperature: %2.1f Celsius\tHumidity: %2.1f%%\r\n", temperature, humidity);
@@ -114,7 +114,7 @@ void setupWiFi() {
     delay(250);
   }
   IPAddress localIP = WiFi.localIP();
-  Serial.printf("KW setupWiFi(): connected!\r\nKW setupWiFi():  IP-Address is %d.%d.%d.%d\r\n", localIP[0], localIP[1], localIP[2], localIP[3]);
+  Serial.printf(" connected!\r\nKW setupWiFi():  IP-Address is %d.%d.%d.%d\r\n", localIP[0], localIP[1], localIP[2], localIP[3]);
 }
 
 // setup function for SinricPro

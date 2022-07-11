@@ -1,3 +1,11 @@
+// Have to be defined before the #includes
+// #define DEBUG_ESP_PORT Serial
+
+#define NODEBUG_WEBSOCKETS
+#define NDEBUG
+#define NODEBUG_SINRIC
+
+
 #include <M5StickC.h>
 #undef min // Workaround https://github.com/m5stack/M5Stack/issues/97
 #include <Wire.h>
@@ -5,14 +13,13 @@
 #include <SinricPro.h>
 #include <SinricProTemperaturesensor.h>
 
-// Document library versions here...
 
 #define INPUT_PIN 33 // Water Sensor
-#define PUMP_PIN 32
+#define PUMP_PIN 32  // Water Pump
 
 #define I2C_SDA 0
 #define I2C_SCL 26
-#define SHT_ADDRESS 0x44 //SHT30 Temperature Sensor
+#define SHT_ADDRESS 0x44 // SHT30 Temperature Sensor
 
 // WIFI_SSID & WIFI_PASS defined in an external file excluded from Github
 // Also used for SinricPro APP_KEY, APP_SECRET & TEMP_SENSOR_ID
@@ -21,52 +28,209 @@
 // M5 Stick C LCD is 80 x 160
 #define LINE1 5
 #define LINE2 22
+#define LINE3 39
 
 #define LINE4 63
 #define LINE5 80
 
+#define LINE6 106
 #define LINE7 123
 #define LINE8 140
 
-#define DEBUG_ESP_PORT serial
 
-// NODEBUG_WEBSOCKETS
-// NDEBUG
-// NODEBUG_SINRIC
-
- 
+// Global Variables
 int rawADC; // Value read from ADC
+bool wifiConnected = false;
+bool sinricConnected = false;
 RTC_DATA_ATTR int waterADC = 1900; // ADC Level at which we turn on watering, save in RTC memory to keep across a deep sleep
 
+
+// -------------------------------------------
+// setup() routines
 
 // Shutdown the SH200Q IMU, not controlled by the AXP
 // https://github.com/eggfly/M5StickCProjects/blob/master/demo/StickWatch2PowerManagment/StickWatch2PowerManagment.ino
 void shutdownSH200Q() {
+  Serial.printf("KW shutdownSH200Q(): Start\r\n");
   Wire.beginTransmission(0x6C);
   Wire.write(0x75);
   byte success = Wire.endTransmission(false);
-  //Serial.printf("success: %d \n", success);
+  Serial.printf("  Wire.endTransmission() success: %d \n", success);
   byte byteCount = Wire.requestFrom(0x6C, 1);
-  //Serial.printf("byteCount: %d \n", byteCount);
+  Serial.printf("  Wire.requestFrom() byteCount: %d \n", byteCount);
   uint8_t data = Wire.read();
   // uint8_t b = read_register(0x6C, 0x0E);
-  //Serial.print("byte: ");
-  //Serial.println(data, BIN);
+  Serial.print("  Wire.read() byte: ");
+  Serial.println(data, BIN);
 
   Wire.beginTransmission(0x6C);
   Wire.write(0x75);
   Wire.write(0x80);  // SH200Q shutdown mode (only i2c alive)
   byte succ = Wire.endTransmission();
-  //Serial.printf("succ: %d \n", succ);
+  Serial.printf("  Wire.endTransmission() succ: %d \n", succ);
+  Serial.printf("KW shutdownSH200Q(): Complete\r\n");
 }
 
 
-// https://github.com/eggfly/M5StickCProjects/blob/master/demo/StickWatch2PowerManagment/StickWatch2PowerManagment.ino
-void shutdown_all_except_self() {
-  Wire.beginTransmission(0x34);
-  Wire.write(0x12);
-  Wire.write(0x01);
-  Wire.endTransmission();
+// setup function for WiFi connection
+void setupWiFi() {
+  Serial.printf("KW setupWiFi(): Start\r\n");
+  int loop_count = 0;
+  
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    loop_count += 1;
+    Serial.printf("w");
+    M5.Lcd.drawString("WiFi", 40, LINE2);
+    delay(250);
+    M5.Lcd.drawString("    ", 40, LINE2);
+    delay(250);
+
+    // If we don't get WiFi within 100 loops give up and move on
+    if (loop_count >= 100) {
+      Serial.printf(" No WiFi!\r\n");
+      M5.Lcd.drawString("No WiFi!\r\n", 40, LINE2);
+      return; // Exit setupWiFi
+    }
+  }
+  Serial.printf(" WiFi Connected.\r\n");
+  wifiConnected = true;
+  IPAddress localIP = WiFi.localIP();
+  Serial.printf("KW setupWiFi(): IP-Address is %d.%d.%d.%d\r\n", localIP[0], localIP[1], localIP[2], localIP[3]);
+  M5.Lcd.drawString("." + String(localIP[3]), 40, LINE2);
+
+  Serial.printf("KW setupWiFi(): Complete\r\n");
+}
+
+// Comms with SinricPro through seperate task that runs in the background
+void handle(void * parameter) {
+  while (true) {
+    SinricPro.handle();
+    vTaskDelay(500 / portTICK_PERIOD_MS);  // Pause the task for 500ms
+  }
+}
+
+
+// SinricPro has to be able to send a device on / off message, we just ignore it
+bool onPowerState(const String &deviceId, bool &state) {
+  Serial.printf("Temperaturesensor turned %s (via SinricPro) \r\n", state?"on":"off");
+  return true; // request handled properly
+}
+
+
+// setup function for SinricPro
+void setupSinricPro() {
+  int loop_count = 0;
+  
+  Serial.printf("KW setupSinricPro(): Start\r\n");
+  // add device to SinricPro
+  SinricProTemperaturesensor &mySensor = SinricPro[TEMP_SENSOR_ID];
+  mySensor.onPowerState(onPowerState);
+  
+  SinricPro.onConnected([](){ sinricConnected = true;}); 
+  SinricPro.onDisconnected([](){ Serial.printf("  Disconnected from SinricPro!\r\n"); sinricConnected = false;});
+  //SinricPro.restoreDeviceStates(true);
+  SinricPro.begin(APP_KEY, APP_SECRET);
+
+  //mySensor.sendPowerStateEvent(1, "Awake");
+
+  // Comms with SinricPro through seperate task that runs in the background
+  // xTaskCreate(Function, Name, Stack, Parameter, Priority, Handle)
+  xTaskCreate(handle, "SinricPro Handle", 20000, NULL, 1, NULL);
+
+  // If we dont have a connection to WiFi no point waiting here
+  if (!wifiConnected) { loop_count = 100; }
+
+  while(!sinricConnected) {
+    loop_count += 1;
+    Serial.printf("s");
+    M5.Lcd.drawString("Sinric", 40, LINE3);
+    delay(500);
+    M5.Lcd.drawString("      ", 40, LINE3);
+    delay(500);
+
+    // If we don't connect within 100 loops give up and move on
+    if (loop_count >= 100) {
+      Serial.printf(" NOT Connected!\r\n");
+      M5.Lcd.drawString("N Cnct!", 40, LINE3);
+      return; // Exit upload
+    }
+  }
+  
+  Serial.printf(" Connected.\r\n");
+  M5.Lcd.drawString("Cnctd", 40, LINE3);
+  
+  Serial.printf("KW setupSinricPro(): Complete\r\n");
+}
+
+
+// Run every time after a deep sleep
+void setup() { 
+
+  setCpuFrequencyMhz(80); // Reduce CPU frequency to save power, default 240Mhz?
+  
+  // Replaced with specific commands we need to save power
+  // M5.begin(); // Calls Serial.begin, Axp.begin and LCD.begin
+
+  Serial.begin(115200);
+
+  // LDO2: Display backlight. LDO3: Display Control. RTC: Always ON, Switch RTC charging. DCDC1: Main rail - when not set the controller shuts down. DCDC3: Use unknown.  LDO0: MIC
+  // begin(bool disableLDO2 = false, bool disableLDO3 = false, bool disableRTC = false, bool disableDCDC1 = false, bool disableDCDC3 = false, bool disableLDO0 = false);
+  // Don't power up Microphone
+  M5.Axp.begin(false, false, false, false, false, true);
+  
+  M5.Lcd.begin();
+  // Lower LCD brightness
+  M5.Axp.ScreenBreath(10);
+  
+  //shutdownSH200Q(); // Shutdown the IMU (not controlled by the AXP)  SH200Q or MPU6886?
+  //M5.Rtc.begin();
+
+  // M5.axp.EnableCoulombcounter(); // Doesnt seem to work, perhaps not saved across a deep sleep?
+
+  M5.Lcd.setRotation(2); // Vertical, USB C at top
+  M5.Lcd.setTextSize(2); // 1 = smallest
+  M5.Lcd.setTextColor(GREEN, BLACK);
+  M5.Lcd.setTextDatum(TC_DATUM); // Top Centre - Sets where in the text the drawString x, y position refers to
+  M5.Lcd.drawString("Water", 40, LINE1); // X, Y, Font
+ 
+  pinMode(INPUT_PIN, INPUT);
+  pinMode(PUMP_PIN, OUTPUT);
+  pinMode(M5_LED, OUTPUT);
+  digitalWrite(M5_LED, HIGH); // Make sure LED is off
+
+  // Print battery state
+  outputBatt();
+  
+  // Connect to WiFi
+  setupWiFi();
+
+  // SinricPro reports to Alexa
+  setupSinricPro();
+  
+  //pinMode(25, OUTPUT);  // G25 is shared with G36, but not sure why they were set low here?
+  //digitalWrite(25, 0);
+
+  Serial.printf("KW setup(): Complete\r\n");
+}
+
+
+
+
+// -------------------------------------------
+// loop() routines
+
+
+// Get and Print Battery / Charge Value
+void outputBatt() {
+  if (M5.Axp.GetBatChargeCurrent() > 1) {
+    //M5.Lcd.drawString(" Chrg: ", 40, LINE7); 
+    M5.Lcd.drawString(" C " + String(int(M5.Axp.GetBatChargeCurrent())) + "mA ", 40, LINE8);  
+  } else {
+    //M5.Lcd.drawString(" Batt: ", 40, LINE7); 
+    M5.Lcd.drawString("B " + String(getBatteryLevel(M5.Axp.GetBatVoltage())) + "%", 40, LINE8);  
+  }
 }
 
 
@@ -117,40 +281,14 @@ int getBatteryLevel(float voltage) {
 }
 
 
-// Print ADC Value
-void outputADC(int rawADC) {
-  M5.Lcd.drawString(" ADC: ", 40, LINE4); // X, Y, Font
-  M5.Lcd.drawString(String(rawADC), 40, LINE5); 
-  
-  // Serial.print("ADC value: ");
-  // Serial.println(rawADC);
-}
-
-
-// Get and Print Battery / Charge Value
-void outputBatt() {
-  if (M5.Axp.GetBatChargeCurrent() > 1) {
-    //M5.Lcd.drawString("Chrg:", 40, LINE7); 
-    M5.Lcd.drawString("C " + String(int(M5.Axp.GetBatChargeCurrent())) + "mA", 40, LINE8);  
-  } else {
-    //M5.Lcd.drawString("Batt:", 40, LINE7); 
-    M5.Lcd.drawString("B " + String(getBatteryLevel(M5.Axp.GetBatVoltage())) + "%", 40, LINE8);  
-  }
-}
-
-
-// SinricPro has to be able to send a device on / off message, we just ignore it
-bool onPowerState(const String &deviceId, bool &state) {
-  Serial.printf("Temperaturesensor turned %s (via SinricPro) \r\n", state?"on":"off");
-  return true; // request handled properly
-}
-
-
 // Get, Print and send to Alexa Temperature Value
 void outputTemperature() {
   unsigned int data[6];
   float temp = 0.0;
+  float humid = 0.0;
 
+  Serial.printf("KW outputTemperature(): Start\r\n");
+  
   // Startup I2C for the SHT30 temperature sensor - I2C_SDA = 0, I2C_SCL = 26.
   Wire.begin(I2C_SDA,I2C_SCL);
 
@@ -181,62 +319,48 @@ void outputTemperature() {
 
   // Convert the data
   temp = ((((data[0] * 256.0) + data[1]) * 175) / 65535.0) - 45;
+  humid = ((((data[3] * 256.0) + data[4]) * 100) / 65535.0);
 
   //M5.Lcd.setCursor(0, 10, 106);
   //M5.Lcd.printf("T %2.1f", temp);
   M5.Lcd.drawString("T " + String(temp,1), 40, LINE7);  
 
-  // Report temperature to Alexa
-  SinricPro.handle();
-  SinricProTemperaturesensor &mySensor = SinricPro[TEMP_SENSOR_ID];  // get temperaturesensor device
-  bool success = mySensor.sendTemperatureEvent(temp, 0); // send event
-  if (!success) {  // if sending event failed, print error message
-    Serial.printf("SinricPro: Something went wrong...could not send Event to server!\r\n");
-  } 
-  SinricPro.handle();
+  uploadTemperature(temp, humid);
+   
+  Serial.printf("KW outputTemperature(): Complete\r\n");
 }
 
-
-// setup function for WiFi connection
-void setupWiFi() {
+// Upload temperature to Sinric
+void uploadTemperature(float temp, float humid) {
+  Serial.printf("KW uploadTemperature(): Start\r\n");
   int loop_count = 0;
+
+  // If we dont have a connection to the SinrcPro Server no point waiting here
+  if (!sinricConnected) { loop_count = 100; }
   
-  Serial.printf("\r\n[Wifi]: Connecting");
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-
-  while (WiFi.status() != WL_CONNECTED) {
+  SinricProTemperaturesensor &mySensor = SinricPro[TEMP_SENSOR_ID];  // get temperaturesensor device
+  
+  while (!mySensor.sendTemperatureEvent(temp, humid)) {
     loop_count += 1;
-    //Serial.printf(".");
-    M5.Lcd.drawString("WiFi", 40, LINE2);
-    delay(250);
-    M5.Lcd.drawString("    ", 40, LINE2);
-    delay(250);
+    Serial.printf("t");
+    M5.Lcd.drawString("Temp", 40, LINE6);
+    delay(500);
+    M5.Lcd.drawString("      ", 40, LINE6);
+    delay(500);
 
-    // If we don't get WiFi within 100 loops give up and move on
+    // If we don't send within 100 loops give up and move on
     if (loop_count >= 100) {
-      M5.Lcd.drawString("No WiFi", 45, LINE2);
-      return; // Exit setupWiFi
+      Serial.printf(" NOT Sent!\r\n");
+      M5.Lcd.drawString("N Sent!", 40, LINE6);
+      return; // Exit upload
     }
   }
   
-  IPAddress localIP = WiFi.localIP();
-  Serial.printf("WiFi connected!\r\n[WiFi]: IP-Address is %d.%d.%d.%d\r\n", localIP[0], localIP[1], localIP[2], localIP[3]);
-  M5.Lcd.drawString("." + String(localIP[3]), 40, LINE2);
-}
+  Serial.printf(" Sent.\r\n");
+  M5.Lcd.drawString("T Sent", 40, LINE6);
 
-
-// setup function for SinricPro
-void setupSinricPro() {
-  // add device to SinricPro
-  SinricProTemperaturesensor &mySensor = SinricPro[TEMP_SENSOR_ID];
-  mySensor.onPowerState(onPowerState);
   
-  SinricPro.onConnected([](){ Serial.printf("Connected to SinricPro\r\n"); }); 
-  SinricPro.onDisconnected([](){ Serial.printf("Disconnected from SinricPro\r\n"); });
-  //SinricPro.restoreDeviceStates(true); // Uncomment to restore the last known state from the server.
-  SinricPro.begin(APP_KEY, APP_SECRET);
-
-  mySensor.sendPowerStateEvent(1, "Awake");
+  Serial.printf("KW uploadTemperature(): Complete\r\n");
 }
 
 
@@ -252,6 +376,26 @@ void blinkLED(void * parameter) {
   }
 }
 
+
+// Print ADC Value
+void outputADC(int rawADC) {
+  M5.Lcd.drawString(" ADC: ", 40, LINE4); // X, Y, Font
+  M5.Lcd.drawString(" " + String(rawADC) + " ", 40, LINE5); 
+  
+  // Serial.print("ADC value: ");
+  // Serial.println(rawADC);
+}
+
+
+// https://github.com/eggfly/M5StickCProjects/blob/master/demo/StickWatch2PowerManagment/StickWatch2PowerManagment.ino
+void shutdown_all_except_self() {
+  Wire.beginTransmission(0x34);
+  Wire.write(0x12);
+  Wire.write(0x01);
+  Wire.endTransmission();
+}
+
+
 void myDeepSleep(int seconds) {
   // ToDo What else can we turn off here to save power?
   shutdownSH200Q(); // Shutdown the IMU (not controlled by the AXP)
@@ -266,69 +410,25 @@ void myLightSleep(int seconds) {
 }
 
 
-// Run every time after a deep sleep
-void setup() { 
-
-  //setCpuFrequencyMhz(80); // Reduce CPU frequency to save power, default 240Mhz?
-  
-  // Replaced with specific commands we need to save power
-  M5.begin(); // Calls Serial.begin, Axp.begin and LCD.begin
-
-  Serial.begin(115200);
-
-  // LDO2: Display backlight. LDO3: Display Control. RTC: Always ON, Switch RTC charging. DCDC1: Main rail - when not set the controller shuts down. DCDC3: Use unknown.  LDO0: MIC
-  // begin(bool disableLDO2 = false, bool disableLDO3 = false, bool disableRTC = false, bool disableDCDC1 = false, bool disableDCDC3 = false, bool disableLDO0 = false);
-  // Don't power up RTC nor Microphone
-  // O1 M5.Axp.begin(false, false, true, false, false, true);
-  
-  // O1 M5.Lcd.begin();
-  
-  //shutdownSH200Q(); // Shutdown the IMU (not controlled by the AXP)  SH200Q or MPU6886?
-  //M5.Rtc.begin();
-
-  // M5.axp.EnableCoulombcounter(); // Doesnt seem to work, perhaps not saved across a deep sleep?
-
-  M5.Lcd.setRotation(2); // Vertical, USB C at top
-  M5.Lcd.setTextSize(2); // 1 = smallest
-  M5.Lcd.setTextColor(GREEN, BLACK);
-  M5.Lcd.setTextDatum(TC_DATUM); // Top Centre - Sets where in the text the drawString x, y position refers to
-  M5.Lcd.drawString("Water", 40, LINE1); // X, Y, Font
- 
-  pinMode(INPUT_PIN, INPUT);
-  pinMode(PUMP_PIN, OUTPUT);
-  pinMode(M5_LED, OUTPUT);
-  digitalWrite(M5_LED, HIGH); // Make sure LED is off
-
-  setupWiFi();
-
-  // SinricPro reports to Alexa
-  setupSinricPro();
-  
-  //pinMode(25, OUTPUT);  // G25 is shared with G36, but not sure why they were set low here?
-  //digitalWrite(25, 0);
-}
-
-
+// Main Loop
 void loop() { 
-
-  // Print battery state
-  outputBatt();
+  Serial.printf("KW loop(): Start\r\n");
+  
   outputTemperature();
 
   // If rawADC 10% above or below waterADC keep in built red LED on
   bool ledOn = false;
-  rawADC = analogRead(INPUT_PIN);
-  if (rawADC > (waterADC * 1.1) || rawADC < (waterADC * 0.9)) {
-    digitalWrite(M5_LED, LOW); // LED On
-    ledOn = true;
-  } else {
-    digitalWrite(M5_LED, HIGH); // LED Off
-    ledOn = false;
-  }
+  //rawADC = analogRead(INPUT_PIN);
+  //if (rawADC > (waterADC * 1.1) || rawADC < (waterADC * 0.9)) {
+  //  digitalWrite(M5_LED, LOW); // LED On
+  //  ledOn = true;
+  //} else {
+  //  digitalWrite(M5_LED, HIGH); // LED Off
+  //  ledOn = false;
+  //}
   
   // If battery level low (and LED not already on solid) then blink in built red LED
   if (getBatteryLevel(M5.Axp.GetBatVoltage()) < 15 && !ledOn) {
-    // digitalWrite(M5_LED, LOW); // LED On
     // Flash LED through seperate task that runs in the background
     // xTaskCreate(Function, Name, Stack, Parameter, Priority, Handle)
     TaskHandle_t blinkTask;
@@ -398,10 +498,12 @@ void loop() {
   outputBatt();
 
   // Leave display on for X ms so it can be read
-  delay(2000);
+  delay(10000);
 
-  SinricProTemperaturesensor &mySensor = SinricPro[TEMP_SENSOR_ID];
-  mySensor.sendPowerStateEvent(0, "Deep_Sleep");
+  //SinricProTemperaturesensor &mySensor = SinricPro[TEMP_SENSOR_ID];
+  //mySensor.sendPowerStateEvent(0, "Deep_Sleep");
+
+  Serial.printf("KW loop(): Complete\r\n");
 
   // Go to sleep until button is pressed or X seconds, whichever is sooner
   myDeepSleep(10);
