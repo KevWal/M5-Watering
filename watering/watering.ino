@@ -226,7 +226,7 @@ void setup() {
 void outputBatt() {
   if (M5.Axp.GetBatChargeCurrent() > 1) {
     //M5.Lcd.drawString(" Chrg: ", 40, LINE7); 
-    M5.Lcd.drawString(" C " + String(int(M5.Axp.GetBatChargeCurrent())) + "mA ", 40, LINE8);  
+    M5.Lcd.drawString("C " + String(int(M5.Axp.GetBatChargeCurrent())) + "mA", 40, LINE8);  
   } else {
     //M5.Lcd.drawString(" Batt: ", 40, LINE7); 
     M5.Lcd.drawString("B " + String(getBatteryLevel(M5.Axp.GetBatVoltage())) + "%", 40, LINE8);  
@@ -498,7 +498,7 @@ void loop() {
   outputBatt();
 
   // Leave display on for X ms so it can be read
-  delay(10000);
+  delay(5000);
 
   //SinricProTemperaturesensor &mySensor = SinricPro[TEMP_SENSOR_ID];
   //mySensor.sendPowerStateEvent(0, "Deep_Sleep");
