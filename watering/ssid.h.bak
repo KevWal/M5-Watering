@@ -1,0 +1,7 @@
+#define WIFI_SSID         "BT-GGA53S"
+#define WIFI_PASS         "XKr6V4HnEQbDCm"
+
+// Sinric Pro Credentials:
+#define APP_KEY    "3ad420f7-2718-471d-a9bf-f71ff0cbb0df"    // Should look like "de0bxxxx-1x3x-4x3x-ax2x-5dabxxxxxxxx"
+#define APP_SECRET "dd6a1e38-6b35-4aa0-b2be-d9a62ded915b-6ddddd01-9622-4840-b686-fceb77ee3f4e" // Should look like "5f36xxxx-x3x7-4x3x-xexe-e86724a9xxxx-4c4axxxx-3x3x-x5xe-x9x3-333d65xxxxxx"
+#define TEMP_SENSOR_ID  "62c1f7050aec232058f4eea2"  // Should look like "5dc1564130xxxxxxxxxxxxxx"

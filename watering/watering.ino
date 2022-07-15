@@ -1,9 +1,9 @@
 // Have to be defined before the #includes
-// #define DEBUG_ESP_PORT Serial
+#define DEBUG_ESP_PORT Serial
 
-#define NODEBUG_WEBSOCKETS
-#define NDEBUG
-#define NODEBUG_SINRIC
+//#define NODEBUG_WEBSOCKETS
+//#define NDEBUG
+//#define NODEBUG_SINRIC
 
 
 #include <M5StickC.h>
@@ -11,7 +11,7 @@
 #include <Wire.h>
 #include <WiFi.h>
 #include <SinricPro.h>
-#include <SinricProTemperaturesensor.h>
+#include "TemperatureAlert.h"
 
 
 #define INPUT_PIN 33 // Water Sensor
@@ -125,8 +125,8 @@ void setupSinricPro() {
   
   Serial.printf("KW setupSinricPro(): Start\r\n");
   // add device to SinricPro
-  SinricProTemperaturesensor &mySensor = SinricPro[TEMP_SENSOR_ID];
-  mySensor.onPowerState(onPowerState);
+  TemperatureAlert &temperatureAlert = SinricPro[DEVICE_ID];
+  //temperatureAlert.onPowerState(onPowerState);
   
   SinricPro.onConnected([](){ sinricConnected = true;}); 
   SinricPro.onDisconnected([](){ Serial.printf("  Disconnected from SinricPro!\r\n"); sinricConnected = false;});
@@ -338,9 +338,9 @@ void uploadTemperature(float temp, float humid) {
   // If we dont have a connection to the SinrcPro Server no point waiting here
   if (!sinricConnected) { loop_count = 100; }
   
-  SinricProTemperaturesensor &mySensor = SinricPro[TEMP_SENSOR_ID];  // get temperaturesensor device
+  TemperatureAlert &temperatureAlert = SinricPro[DEVICE_ID];  // get temperaturesensor device
   
-  while (!mySensor.sendTemperatureEvent(temp, humid)) {
+  while (!temperatureAlert.sendTemperatureEvent(temp, humid)) {
     loop_count += 1;
     Serial.printf("t");
     M5.Lcd.drawString("Temp", 40, LINE6);
@@ -358,6 +358,14 @@ void uploadTemperature(float temp, float humid) {
   
   Serial.printf(" Sent.\r\n");
   M5.Lcd.drawString("T Sent", 40, LINE6);
+
+
+  if (temp > 30) {
+    Serial.printf("Temperature Alert Sent.\r\n");
+    temperatureAlert.sendContactEvent(true);
+  } else {
+    temperatureAlert.sendContactEvent(false);
+  }
 
   
   Serial.printf("KW uploadTemperature(): Complete\r\n");
@@ -506,5 +514,5 @@ void loop() {
   Serial.printf("KW loop(): Complete\r\n");
 
   // Go to sleep until button is pressed or X seconds, whichever is sooner
-  myDeepSleep(10);
+  myDeepSleep(30);
 }
