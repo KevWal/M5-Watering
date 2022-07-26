@@ -361,7 +361,7 @@ void uploadTemperature(float temp, float humid) {
 
 
   if (temp > 30) {
-    Serial.printf("Temperature Alert Sent.\r\n");
+    Serial.printf("KW Temperature Alert Sent.\r\n");
     temperatureAlert.sendContactEvent(true);
   } else {
     temperatureAlert.sendContactEvent(false);
@@ -514,5 +514,5 @@ void loop() {
   Serial.printf("KW loop(): Complete\r\n");
 
   // Go to sleep until button is pressed or X seconds, whichever is sooner
-  myDeepSleep(30);
+  myDeepSleep(60);
 }
